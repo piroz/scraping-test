@@ -2,16 +2,20 @@ const puppeteer = require("puppeteer")
 const fetch = require("node-fetch")
 const async = require("async")
 const fs = require('node:fs').promises
-const crypto = require("crypto")
+const crypto = require("node:crypto")
 const child_process = require("node:child_process")
 const Buffer = require('node:buffer').Buffer
+const node_url = require('node:url')
+
+const OUT_DIRECTORY='/tmp/out'
+fs.mkdir(OUT_DIRECTORY)
 
 function h(buffer) {
     return crypto.createHash('sha256').update(buffer).digest('hex')
 }
 
 async function fetchIt(url) {
-    console.log(Date.now())
+    console.log("fetchIt", url)
     const response = await fetch(url)
     const blob = await response.blob()
 
@@ -21,8 +25,7 @@ async function fetchIt(url) {
 
     const arrayBuffer = await blob.arrayBuffer()
 
-    const r = await fs.writeFile(`/tmp/${h(url)}`, Buffer.from(arrayBuffer))
-    console.log(r)
+    const r = await fs.writeFile(`${OUT_DIRECTORY}/${h(url)}`, Buffer.from(arrayBuffer))
 }
 
 async function loadAndFetch(url) {
@@ -51,16 +54,37 @@ async function loadAndFetch(url) {
     page.on("response", res => {
         const url = res.url()
 
-        if (running.has(url)) {
+        const parsed = new node_url.URL(url)
+
+        if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
             return
         }
 
-        running.add(url)
+        if (running.has(parsed.host + parsed.pathname)) {
+            return
+        }
+
+        running.add(parsed.host + parsed.pathname)
 
         q.push(url)
     })
 
-    await page.goto(url, {waitUntil: 'networkidle2'})
+    console.log("page goto", url)
+    try {
+
+        await page.goto(url, {waitUntil: 'domcontentloaded'})
+
+        await page.waitForFunction(() => {
+            console.log(window.location.href)
+            const locationCondition = window.location.href === url
+            const readyStateCondition = window.document.readyState === 'interactive' || window.document.readyState === 'complete'
+            return locationCondition && readyStateCondition
+        })
+    } catch (e) {
+        console.error(e)
+    } finally {
+        q.push(url)
+    }
 
     if (!q.idle()) {
         await q.drain()
@@ -68,22 +92,15 @@ async function loadAndFetch(url) {
     
     await browser.close()
 
-    console.log(running.size)
     console.log(q.idle())
+    console.log("running.size", running.size)
+    child_process.exec(`ls -l ${OUT_DIRECTORY}|wc -l`, (error, stdout, stderr) => {
+        if (error) {
+            console.error(error)
+        }
 
-    const command = child_process.spawn('du', ['-h', `/tmp`])
-
-    command.stdout.on('data', (data) => {
-        console.log(`stdout: ${data}`);
+        console.log(stdout)
     })
-    
-    command.on('close', (code) => {
-        console.log(`child process close all stdio with code ${code}`);
-    })
-    
-    command.on('exit', (code) => {
-        console.log(`child process exited with code ${code}`);
-    });
 }
 
 loadAndFetch(process.argv[2])
