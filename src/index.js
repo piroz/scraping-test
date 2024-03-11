@@ -15,7 +15,6 @@ function h(buffer) {
 }
 
 async function fetchIt(url) {
-    console.log("fetchIt", url)
     const response = await fetch(url)
     const blob = await response.blob()
 
@@ -23,9 +22,20 @@ async function fetchIt(url) {
         return
     }
 
-    const arrayBuffer = await blob.arrayBuffer()
+    const buffer = Buffer.from(await blob.arrayBuffer())
 
-    const r = await fs.writeFile(`${OUT_DIRECTORY}/${h(url)}`, Buffer.from(arrayBuffer))
+    await fs.writeFile(`${OUT_DIRECTORY}/${h(url)}`, buffer)
+}
+
+function execUtil(command) {
+    child_process.exec(command, (error, stdout, stderr) => {
+        if (error) {
+            console.error(error)
+            console.error(stderr)
+        }
+
+        console.log(stdout)
+    })
 }
 
 async function loadAndFetch(url) {
@@ -41,6 +51,11 @@ async function loadAndFetch(url) {
     const running = new Set()
 
     const q = async.queue((url, callback) => {
+        console.log({
+            running: q.running(),
+            size: q.length(),
+            url: url
+        })
         fetchIt(url).then(() => {
             callback()
         }, err => {
@@ -71,7 +86,6 @@ async function loadAndFetch(url) {
 
     console.log("page goto", url)
     try {
-
         await page.goto(url, {waitUntil: 'domcontentloaded'})
 
         await page.waitForFunction(() => {
@@ -94,13 +108,7 @@ async function loadAndFetch(url) {
 
     console.log(q.idle())
     console.log("running.size", running.size)
-    child_process.exec(`ls -l ${OUT_DIRECTORY}|wc -l`, (error, stdout, stderr) => {
-        if (error) {
-            console.error(error)
-        }
-
-        console.log(stdout)
-    })
+    execUtil(`ls -l ${OUT_DIRECTORY}|wc -l`)
 }
 
 loadAndFetch(process.argv[2])
